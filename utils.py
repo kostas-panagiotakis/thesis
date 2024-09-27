@@ -19,6 +19,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from xgboost import XGBRegressor
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
+from sklearn.ensemble import RandomForestRegressor
 
                                                             #################### CONSTANTS ####################
 
@@ -464,7 +465,7 @@ def simulate_gaia(nTest=10000, alError=1):
 
                                                     #################### Missing Data Inference ####################
 
-def fill_missing_values(df, target_feature, model=None, imputation_strategy='mean'):
+def fill_missing_values_XGBOOST(df, target_feature, model=None, imputation_strategy='mean'):
     # Separate rows with and without missing target_feature
     df_known = df.dropna(subset=[target_feature])
     df_missing = df[df[target_feature].isnull()]
@@ -535,16 +536,6 @@ def fill_missing_values(df, target_feature, model=None, imputation_strategy='mea
 
     print(feature_importance_df)
 
-    # Residual plot
-    residuals = y_test - y_pred
-    plt.figure(figsize=(10, 6))
-    plt.scatter(y_pred, residuals)
-    plt.axhline(y=0, color='r', linestyle='--')
-    plt.xlabel('Predicted Values')
-    plt.ylabel('Residuals')
-    plt.title('Residual Plot')
-    plt.show()
-
     # Learning curve
     train_sizes, train_scores, test_scores = learning_curve(model, X_known, y_known, cv=5, scoring='neg_mean_squared_error', n_jobs=-1, train_sizes=np.linspace(0.1, 1.0, 10))
     train_scores_mean = -train_scores.mean(axis=1)
@@ -569,3 +560,84 @@ def fill_missing_values(df, target_feature, model=None, imputation_strategy='mea
 
     # Return the full dataframe with the updated column
     return df
+
+def fill_missing_values_RF(df, target_feature, model=None, imputation_strategy='mean'):
+    # Separate rows with and without missing target_feature
+    df_known = df.dropna(subset=[target_feature])
+    df_missing = df[df[target_feature].isnull()]
+
+    # Identify categorical columns
+    categorical_cols = df_known.select_dtypes(include=['object']).columns
+
+    # One-hot encode categorical columns
+    encoder = OneHotEncoder(sparse=False, handle_unknown='ignore')
+    encoded_known = encoder.fit_transform(df_known[categorical_cols])
+    encoded_missing = encoder.transform(df_missing[categorical_cols])
+
+    # Create DataFrames from the encoded data
+    encoded_known_df = pd.DataFrame(encoded_known, columns=encoder.get_feature_names_out(categorical_cols))
+    encoded_missing_df = pd.DataFrame(encoded_missing, columns=encoder.get_feature_names_out(categorical_cols))
+
+    # Drop original categorical columns and concatenate encoded columns
+    X_known = df_known.drop(columns=[target_feature] + list(categorical_cols))
+    X_known = pd.concat([X_known.reset_index(drop=True), encoded_known_df.reset_index(drop=True)], axis=1)
+
+    X_missing = df_missing.drop(columns=[target_feature] + list(categorical_cols))
+    X_missing = pd.concat([X_missing.reset_index(drop=True), encoded_missing_df.reset_index(drop=True)], axis=1)
+
+    # Fill missing values in features
+    imputer = SimpleImputer(strategy=imputation_strategy)
+    X_known = imputer.fit_transform(X_known)
+    X_missing = imputer.transform(X_missing)
+
+    y_known = df_known[target_feature]
+
+    # Split the known data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X_known, y_known, test_size=0.2, random_state=42)
+
+    # Print the shapes of the splits
+    print(f'X_train shape: {X_train.shape}')
+    print(f'X_test shape: {X_test.shape}')
+    print(f'y_train shape: {y_train.shape}')
+    print(f'y_test shape: {y_test.shape}')
+
+    # Train the model with progress bar
+    if model is None:
+        model = RandomForestRegressor(random_state=42)
+    
+    for _ in tqdm(range(1), desc="Training model"):
+        model.fit(X_train, y_train)
+
+    # Predict the missing target_feature values with progress bar
+    y_pred = None
+    for _ in tqdm(range(1), desc="Predicting test set"):
+        y_pred = model.predict(X_test)
+    
+    print(f'Mean Squared Error: {mean_squared_error(y_test, y_pred)}')
+    print(np.mean(np.abs(y_test - y_pred)))
+    
+    # Predict the missing target_feature values with progress bar
+    predicted_values = None
+    for _ in tqdm(range(1), desc="Predicting missing values"):
+        predicted_values = model.predict(X_missing)
+
+    # Fill the missing values in the original dataframe
+    df.loc[df[target_feature].isnull(), target_feature] = predicted_values
+
+    # Return the full dataframe with the updated column
+    return df
+
+                                                    #################### Triage ####################
+
+def AMRF(a, M_1, parallax, P):
+    term_1 = a/parallax
+    term_2 = (M_1/M_sun)**(-(1/3))
+    term_3 = (P)**(-(2/3))
+
+    return term_1 * term_2 * term_3
+
+def AMRF_q(q, S):
+
+    term_1 = q/((1+q)**(2/3))
+    term_2 = (1-((S*(1+q))/(q*(1+S))))
+    return term_1 * term_2
