@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import astropy
+import astropy.table
 import astromet
 import math
 import seaborn as sns
@@ -20,6 +21,11 @@ from xgboost import XGBRegressor
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.ensemble import RandomForestRegressor
+from matplotlib.colors import Normalize
+from sevnpy.sevn import SEVNmanager, sevnwrap
+from tqdm import tqdm
+from IC4popsyn.ic4popsyn import populations as pop
+from scipy.spatial import cKDTree
 
                                                             #################### CONSTANTS ####################
 
@@ -110,7 +116,20 @@ def plot_eccentricity_distributions(df, eccentricity_ranges, color_codes):
     for row, (color_code, color_label, color_func) in enumerate(color_codes):
         for col, (e_min, e_max) in enumerate(eccentricity_ranges):
             df_filtered = dataframes[col]
-            scatter = axs[row, col].scatter(df_filtered['vPhi'], df_filtered['vTheta'], c=color_func(df_filtered), cmap='Spectral_r', s=10)
+
+            # Set the colormap and normalization depending on the row
+            if row == 0 or row == 1:
+                cmap = 'twilight_shifted'
+                norm = Normalize(0, 1)
+            elif row == 2:
+                cmap = 'Spectral_r'
+                norm = None
+            else:
+                cmap = 'Spectral_r'
+                norm = None
+
+            # Scatter plot with the correct color mapping and normalization
+            scatter = axs[row, col].scatter(df_filtered['vPhi'], df_filtered['vTheta'], c=color_func(df_filtered), cmap=cmap, s=10, norm=norm)
             axs[row, col].set_title(f'e = {e_min} and {e_max}')
             axs[row, col].set_xlabel('φ')
             axs[row, col].set_ylabel('θ')
@@ -129,7 +148,7 @@ def plot_eccentricity_distributions(df, eccentricity_ranges, color_codes):
 
 def plot_scatter_with_lines(df_filter, x_col, y_col, color_col_num, color_col_den, colorbar_label):
     # figure size
-    plt.figure(figsize=(10, 8))
+    plt.figure(figsize=(6, 5))
 
     # colormap normalization for the colorbar scale
     norm = LogNorm(vmin=0.1, vmax=10)
@@ -285,6 +304,149 @@ def plot_3d_clusters(sb, db, x_col, y_col, z_col, x_min=None, x_max=None, y_min=
     plt.tight_layout()
     plt.show()
 
+def HR_plot(cross_df_filtered):
+    # Normalize ruwe values from 0.1 to 10
+    norm = Normalize(vmin=0.1, vmax=10)
+
+    # Plot the Hertzsprung-Russell diagram color coded by ruwe
+    plt.figure(figsize=(10, 8))
+    sc = plt.scatter(cross_df_filtered['bp_rp_corrected'], cross_df_filtered['M_G'], s=0.1, c=cross_df_filtered['ruwe'], cmap='Spectral_r', norm=norm, alpha=1)
+
+    # Invert y-axis to have bright stars at the top
+    plt.gca().invert_yaxis()
+
+    # Set plot labels and title
+    plt.xlabel('(BP - RP) Corrected Color')
+    plt.ylabel('M_G (Absolute G Magnitude)')
+    plt.title('Hertzsprung-Russell Diagram')
+
+    # Add color bar
+    plt.colorbar(sc, label='ruwe')
+
+    # Show the plot
+    plt.show()
+
+def plot_scatter_with_colorbar(df, x_col, y_col, color_col, remnant_type, figsize=(10, 6), cmap='Spectral_r', s=50, legend_loc='lower right'):
+    """
+    Plot a scatter plot with a colorbar and legend.
+
+    Parameters:
+    - df: DataFrame containing the data
+    - x_col: Column name for the x-axis
+    - y_col: Column name for the y-axis
+    - color_col: Column name for the color coding
+    - remnant_type: Dictionary mapping remnant type values to labels
+    - figsize: Tuple specifying the figure size (default: (10, 6))
+    - cmap: Colormap to use for the scatter plot (default: 'Spectral_r')
+    - s: Size of the scatter plot markers (default: 50)
+    """
+    # Create the plot
+    fig, ax = plt.subplots(figsize=figsize)
+    sc = ax.scatter(df[x_col], df[y_col], c=df[color_col], cmap=cmap, s=s)
+    cbar = fig.colorbar(sc)
+    cbar.set_label('RemnantType')
+    ax.set_xlabel(x_col)
+    ax.set_ylabel(y_col)
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+
+    # Create a legend
+    handles = []
+    for rem_type, label in remnant_type.items():
+        handles.append(plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=sc.cmap(sc.norm(rem_type)), markersize=10, label=label))
+    ax.legend(handles=handles, title='RemnantType', loc=legend_loc, fontsize='small')
+
+    # Show the plot
+    plt.show()
+
+def plot_hr_diagrams(df, cross_df_filtered):
+    """
+    Plot Hertzsprung-Russell diagrams with various color codings.
+
+    Parameters:
+    df (pd.DataFrame): DataFrame containing the original data.
+    cross_df_filtered (pd.DataFrame): DataFrame containing the filtered cross-matched data.
+    """
+    # Change period from days to years
+    df['P'] = df['P'] / 365.25
+
+    # Define the remnant type dictionary
+    remnant_type = {0: "PreMS - 0", 1: "MS - 1", 2: "TerminalMS - 2", 3: "ShellHBurning - 3", 4: "CoreHeBurning - 4",
+                    5: "TerminalCoreHeBurning - 5", 6: "ShellHeBurning - 6", 7: "CO - 7"}
+
+    # Create subplots
+    fig, axs = plt.subplots(2, 3, figsize=(22, 12))
+
+    # Plot 1: Color-coded by RemnantType_1
+    axs[0, 0].scatter(cross_df_filtered['bp_rp_corrected'], cross_df_filtered['M_G'], s=1, c='k', alpha=0.5)
+    sc1 = axs[0, 0].scatter(df['bp_rp_corrected'], df['M_G'], c=df['RemnantType_1'], cmap='Spectral_r', s=1)
+    cbar = fig.colorbar(sc1, ax=axs[0, 0], ticks=list(remnant_type.keys()))
+    cbar.ax.set_yticklabels(list(remnant_type.values()))
+    cbar.set_label('Remnant Type')
+    axs[0, 0].invert_yaxis()
+    axs[0, 0].set_xlabel('(BP - RP) Corrected Color')
+    axs[0, 0].set_ylabel('M_G (Absolute G Magnitude)')
+    axs[0, 0].set_title('Hertzsprung-Russell Diagram (RemnantType_1)')
+
+    # Plot 2: Color-coded by Mass Primary
+    axs[0, 1].scatter(cross_df_filtered['bp_rp_corrected'], cross_df_filtered['M_G'], s=1, c='k', alpha=0.5)
+    sc2 = axs[0, 1].scatter(df['bp_rp_corrected'], df['M_G'], c=df['M_1'], cmap='Spectral_r', s=1)
+    cbar = fig.colorbar(sc2, ax=axs[0, 1])
+    cbar.set_label('Mass Primary (M_sun)')
+    axs[0, 1].invert_yaxis()
+    axs[0, 1].set_xlabel('(BP - RP) Corrected Color')
+    axs[0, 1].set_ylabel('M_G (Absolute G Magnitude)')
+    axs[0, 1].set_title('Hertzsprung-Russell Diagram (Mass Primary)')
+
+    # Plot 3: Color-coded by Mass Secondary
+    axs[0, 2].scatter(cross_df_filtered['bp_rp_corrected'], cross_df_filtered['M_G'], s=1, c='k', alpha=0.5)
+    sc3 = axs[0, 2].scatter(df['bp_rp_corrected'], df['M_G'], c=df['M_2'], cmap='Spectral_r', s=1)
+    cbar = fig.colorbar(sc3, ax=axs[0, 2])
+    cbar.set_label('Mass Secondary (M_sun)')
+    axs[0, 2].invert_yaxis()
+    axs[0, 2].set_xlabel('(BP - RP) Corrected Color')
+    axs[0, 2].set_ylabel('M_G (Absolute G Magnitude)')
+    axs[0, 2].set_title('Hertzsprung-Russell Diagram (Mass Secondary)')
+
+    # Plot 4: Color-coded by ruwe with normalization from 0 to 100
+    norm_ruwe = Normalize(vmin=0, vmax=100)
+    axs[1, 0].scatter(cross_df_filtered['bp_rp_corrected'], cross_df_filtered['M_G'], s=1, c='k', alpha=0.5)
+    sc4 = axs[1, 0].scatter(df['bp_rp_corrected'], df['M_G'], c=df['ruwe'], cmap='Spectral_r', s=1, norm=norm_ruwe)
+    cbar = fig.colorbar(sc4, ax=axs[1, 0])
+    cbar.set_label('ruwe')
+    axs[1, 0].invert_yaxis()
+    axs[1, 0].set_xlabel('(BP - RP) Corrected Color')
+    axs[1, 0].set_ylabel('M_G (Absolute G Magnitude)')
+    axs[1, 0].set_title('Hertzsprung-Russell Diagram (ruwe)')
+
+    # Plot 5: Color-coded by Mass Ratio with normalization from 0 to 5
+    norm_mass_ratio = Normalize(vmin=0, vmax=5)
+    axs[1, 1].scatter(cross_df_filtered['bp_rp_corrected'], cross_df_filtered['M_G'], s=1, c='k', alpha=0.5)
+    sc5 = axs[1, 1].scatter(df['bp_rp_corrected'], df['M_G'], c=df['q'], cmap='Spectral_r', s=1, norm=norm_mass_ratio)
+    cbar = fig.colorbar(sc5, ax=axs[1, 1])
+    cbar.set_label('mass ratio')
+    axs[1, 1].invert_yaxis()
+    axs[1, 1].set_xlabel('(BP - RP) Corrected Color')
+    axs[1, 1].set_ylabel('M_G (Absolute G Magnitude)')
+    axs[1, 1].set_title('Hertzsprung-Russell Diagram (mass ratio)')
+
+    # Plot 6: Color-coded by Period with a logarithmic color scale normalized from 10^-1 to 10^1
+    norm_period = LogNorm(vmin=10**-1, vmax=10**1)
+    axs[1, 2].scatter(cross_df_filtered['bp_rp_corrected'], cross_df_filtered['M_G'], s=1, c='k', alpha=0.5)
+    sc6 = axs[1, 2].scatter(df['bp_rp_corrected'], df['M_G'], c=df['P'], cmap='Spectral_r', s=1, norm=norm_period)
+    cbar = fig.colorbar(sc6, ax=axs[1, 2])
+    cbar.set_label('Period (log scale) (Yrs)')
+    axs[1, 2].invert_yaxis()
+    axs[1, 2].set_xlabel('(BP - RP) Corrected Color')
+    axs[1, 2].set_ylabel('M_G (Absolute G Magnitude)')
+    axs[1, 2].set_title('Hertzsprung-Russell Diagram (Period)')
+
+    # Adjust layout
+    plt.tight_layout()
+
+    # Show the plot
+    plt.show()
+
                                                             #################### FUNCTIONS ####################
 
 # write a function that calculates the values of zeta_0 for a given set of parameters e, vtheta, vphi
@@ -334,22 +496,25 @@ def sigma_astrometric_error(q, l, pllx, a, A, beta_0):
     sigma = term_1*term_2*term_3*term_4
     return sigma
 
-def inferred_P(A, sigma_spectroscopic_error, sigma_astrometric_error, parallax, zeta_0, beta_0):
+def inferred_P(A, sigma_spectroscopic_error, sigma_astrometric_error, parallax, zeta_0, beta_0, q, l):
+    term_1 = (2 * np.pi * A) / (sigma_spectroscopic_error)
+    term_2 = sigma_astrometric_error / parallax
+    term_3 = zeta_0 / beta_0
+    term_4 = (q*(1+l))/(np.abs(q-l))
+    return term_1 * term_2 * term_3 * term_4
+
+def P(A, sigma_spectroscopic_error, sigma_astrometric_error, parallax, zeta_0, beta_0):
     term_1 = (2 * np.pi * A) / (sigma_spectroscopic_error)
     term_2 = sigma_astrometric_error / parallax
     term_3 = zeta_0 / beta_0
     return term_1 * term_2 * term_3
 
-def solve_q(A, G, m_1, sigma_spectroscopic_error, sigma_astrometric_error, parallax, zeta_0, beta_0):
+def infer_q(q, l):
 
     ###### Calculate alpha ######
-    alpha_term_1 = (((A) * (sigma_spectroscopic_error**2)) / (G * m_1))
-    # print(alpha_term_1)
-    alpha_term_2 = (sigma_astrometric_error / parallax)
-    # print(alpha_term_2)
-    alpha_term_3 = (1 / (beta_0 * (zeta_0**2)))
-    # print(alpha_term_3)
-    alpha =  alpha_term_1 * alpha_term_2 * alpha_term_3
+    alpha_term_1 = (q**2*np.abs(q-l))
+    alpha_term_2 = ((l+1)*(1+q)**2)
+    alpha =  alpha_term_1 / alpha_term_2
 
     ###### Calculate mu and lam ######
     mu = - (((6 + alpha) / 3) * alpha)
@@ -454,6 +619,7 @@ def simulate_gaia(nTest=10000, alError=1):
         thisRow['sigma_pllx'] = results['parallax_error']
 
         # results['UWE'] --> results['uwe']
+        # uwe=np.linalg.norm(pos-np.matmul(design,fitparams))/(errs*np.sqrt(2*len(ts)-5))
         thisRow['UWE'] = results['uwe']
 
         thisRow['N_obs'] = results['astrometric_n_obs_al']
@@ -463,6 +629,135 @@ def simulate_gaia(nTest=10000, alError=1):
 
     return allData
 
+def gaia_observation(nTest, evolved_binaries, astromet, Source, dr3_sl, alError=1):
+    dataNames = ('RA', 'Dec', 'pmRA', 'pmDec', 'pllx', 'M_1', 'M_2',
+                 'M_tot', 'q', 'l', 'a', 'e', 'P', 'tPeri',
+                 'Luminosity_0','Luminosity_1', 'Temperature_0', 'Temperature_1',
+                 'vTheta', 'vPhi', 'vOmega',
+                 'predict_dTheta', 'simple_dTheta',
+                 'N_obs', 'sigma_al', 'sigma_ac',
+                 'fit_ra', 'fit_dec', 'fit_pmrac', 'fit_pmdec', 'fit_pllx',
+                 'sigma_rac', 'sigma_dec', 'sigma_pmrac', 'sigma_pmdec', 'sigma_pllx',
+                 'N_vis', 'frac_good', 'AEN', 'UWE', 'ast_errors', 'rv_errors',
+                 'astrometric_chi2_al', 'astrometric_n_good_obs_al', 'astrometric_params_solved',
+                 'ruwe', 'RemnantType_0', 'RemnantType_1'
+                )
+    
+    allData = astropy.table.Table(names=dataNames)
+
+    for i in tqdm(range(nTest)):
+        allData.add_row()
+        thisRow = allData[i]
+        
+        params = astromet.params()
+        params.ra = 360 * np.random.rand(1)[0]
+        params.dec = 180 / np.pi * np.arcsin(np.random.uniform(low=-1, high=1))
+        
+        c = Source(params.ra, params.dec, unit='deg')
+        sl = dr3_sl(c, return_times=True, return_angles=True)
+        ts = 2010 + np.squeeze(np.hstack(sl['times'])) / 365.25
+        sort = np.argsort(ts)
+        ts = np.double(ts[sort])
+        
+        phis = np.squeeze(np.hstack(sl['angles']))[sort]
+        
+        params.parallax = evolved_binaries['Parallax'][i]  # parallax in mas
+        params.pmrac = params.parallax * (1) * np.random.randn()
+        params.pmdec = params.parallax * (1) * np.random.randn()
+        params.mass_1 = evolved_binaries['Mass_0'][i]  # primary mass in Msun
+        params.mass_2 = evolved_binaries['Mass_1'][i]  # secondary mass in Msun
+        params.period = evolved_binaries['Period'][i]  # periods between 0.03 and 30 years
+        params.l = evolved_binaries['l'][i]  # uniform light ratio
+        params.q = evolved_binaries['q'][i]  # uniform mass ratio
+        params.a = evolved_binaries['Semimajor'][i]  # semi-major axis in AU  
+        params.e = evolved_binaries['Eccentricity'][i]  # eccentricity
+        params.L_0 = evolved_binaries['Luminosity_0'][i]  # primary luminosity in Lsun
+        params.L_1 = evolved_binaries['Luminosity_1'][i]  # secondary luminosity in Lsun
+        params.T_0 = evolved_binaries['Temperature_0'][i]  # primary temperature in K
+        params.T_1 = evolved_binaries['Temperature_1'][i]  # secondary temperature in K
+        params.vtheta = np.arccos(-1 + 2 * np.random.rand())
+        params.vphi = 2 * np.pi * np.random.rand()
+        params.vomega = 2 * np.pi * np.random.rand()
+        orbitalPhase = np.random.rand()  # fraction of an orbit completed at t=0
+        params.tperi = params.period * orbitalPhase
+        params.ast_errors = 10 ** np.random.uniform(-2, 4)
+        params.rv_errors = 10 ** 3 * 10 ** np.random.uniform(-3, 2)
+        params.remnant_type_0 = evolved_binaries['RemnantType_0'][i]
+        params.remnant_type_1 = evolved_binaries['RemnantType_1'][i]
+        
+        thisRow['RA'] = float(params.ra)
+        thisRow['Dec'] = float(params.dec)
+        thisRow['pmRA'] = float(params.pmrac)
+        thisRow['pmDec'] = float(params.pmdec)
+        thisRow['pllx'] = float(params.parallax)
+        thisRow['M_1'] = float(params.mass_1)
+        thisRow['M_2'] = float(params.mass_2)
+        thisRow['M_tot'] = float(params.mass_1 + params.mass_2)
+        thisRow['q'] = float(params.q)
+        thisRow['l'] = float(params.l)
+        thisRow['a'] = float(params.a)
+        thisRow['e'] = float(params.e)
+        thisRow['P'] = float(params.period)
+        thisRow['Luminosity_0'] = float(params.L_0)
+        thisRow['Luminosity_1'] = float(params.L_1)
+        thisRow['Temperature_0'] = float(params.T_0)
+        thisRow['Temperature_1'] = float(params.T_1)
+        thisRow['tPeri'] = float(params.tperi)
+        thisRow['vTheta'] = float(params.vtheta)
+        thisRow['vPhi'] = float(params.vphi)
+        thisRow['vOmega'] = float(params.vomega)
+        thisRow['sigma_al'] = float(alError)
+        #thisRow['sigma_ac'] = float(acError)
+        thisRow['ast_errors'] = float(params.ast_errors)
+        thisRow['rv_errors'] = float(params.rv_errors)
+        thisRow['RemnantType_0'] = float(params.remnant_type_0)
+        thisRow['RemnantType_1'] = float(params.remnant_type_1)
+
+        trueRacs, trueDecs = astromet.track(ts, params)
+
+        # added .astype(float) to avoid astromet error
+        phis = phis.astype(float)
+        
+        t_obs, x_obs, phi_obs, rac_obs, dec_obs = astromet.mock_obs(ts, phis, trueRacs, trueDecs, err=alError)
+        
+        fitresults = astromet.fit(t_obs, x_obs, phi_obs, alError, params.ra, params.dec)
+        results = astromet.gaia_results(fitresults)
+        
+        # print('ra, dec, pllx, pmrac, pmdec ', params.ra, params.dec, params.parallax, params.pmrac, params.pmdec)
+        # print(results)
+        
+        # bug somewhere in these
+        #thisRow['simple_dTheta'] = astromet.dtheta_simple(params)
+        #thisRow['predict_dTheta'] = astromet.dtheta_full(params, np.min(ts), np.max(ts))  
+        
+        thisRow['fit_ra'] = float(results['ra'])
+        thisRow['fit_dec'] = float(results['dec'])
+        thisRow['fit_pmrac'] = float(results['pmra'])
+        thisRow['fit_pmdec'] = float(results['pmdec'])
+        thisRow['fit_pllx'] = float(results['parallax'])
+
+        thisRow['sigma_rac'] = float(results['ra_error'])
+        thisRow['sigma_dec'] = float(results['dec_error'])
+        thisRow['sigma_pmrac'] = float(results['pmra_error'])
+        thisRow['sigma_pmdec'] = float(results['pmdec_error'])
+        thisRow['sigma_pllx'] = float(results['parallax_error'])
+        thisRow['astrometric_chi2_al'] = float(results['astrometric_chi2_al'])
+        thisRow['astrometric_n_good_obs_al'] = float(results['astrometric_n_good_obs_al'])
+        thisRow['astrometric_params_solved'] = float(results['astrometric_params_solved'])
+
+        # results['UWE'] --> results['uwe']
+        # uwe = np.linalg.norm(pos - np.matmul(design, fitparams)) / (errs * np.sqrt(2 * len(ts) - 5))
+        thisRow['UWE'] = float(results['uwe'])
+
+        thisRow['N_obs'] = float(results['astrometric_n_obs_al'])
+        # thisRow['frac_good'] = results['astrometric_n_good_obs_al'] / results['astrometric_n_obs_al']
+        thisRow['N_vis'] = float(results['visibility_periods_used'])
+        # thisRow['AEN'] = results['astrometric_excess_noise']
+
+        # calculate ruwe
+        thisRow['ruwe'] = np.sqrt(results['astrometric_chi2_al'] / (results['astrometric_n_good_obs_al'] - results['astrometric_params_solved']))
+
+    return allData
                                                     #################### Missing Data Inference ####################
 
 def fill_missing_values_XGBOOST(df, target_feature, model=None, imputation_strategy='mean'):
@@ -641,3 +936,201 @@ def AMRF_q(q, S):
     term_1 = q/((1+q)**(2/3))
     term_2 = (1-((S*(1+q))/(q*(1+S))))
     return term_1 * term_2
+
+
+                                                        #################### HR Diagram ####################
+
+# Function to calculate distance from parallax
+def calculate_distance(parallax):
+    """Convert parallax in milliarcseconds to distance in parsecs."""
+    # Ensure non-negative parallax
+    with np.errstate(divide='ignore'):
+        distance = 1000 / parallax
+    # Handle zero and negative parallax by setting distance to NaN
+    distance[parallax <= 0] = np.nan
+    return distance
+
+# Function to calculate absolute magnitude
+def calculate_absolute_magnitude(phot_g_mean_mag, distance):
+    """Calculate absolute magnitude from apparent magnitude and distance."""
+    return phot_g_mean_mag - 5 * np.log10(distance) + 5
+
+                                                #################### SEVN - Simulation of Binaries ####################
+
+# Constants
+G = 6.674e-11  # Gravitational constant in m^3/kg/s^2
+M_sun = 1.989e30  # Mass of the sun in kg
+AU = 1.496e11  # Astronomical unit in meters
+day_to_sec = 86400  # Conversion from days to seconds
+
+def create_binary_population(Nbin=100001, backup=1, z=0.02, mass_ranges=[2.3, 100], alphas=[-2.3], q_max=4.0, mass_min=2.3, model='sana12'):
+    """
+    Create a population of binary stars and save the data to a PETAR file.
+
+    Parameters:
+    - Nbin: Number of binary systems (default: 100001)
+    - backup: Number of backup systems (default: 1)
+    - z: Metallicity (default: 0.02)
+    - mass_ranges: List of mass ranges for the initial mass function (default: [0.1,0.5,150])
+    - alphas: List of power-law slopes for the initial mass function (default: [-2.3])
+    - q_max: Maximum mass ratio (default: 4.0)
+    - mass_min: Minimum mass (default: 2.3)
+    - model: Model to use for the binary population (default: 'sana12')
+    """
+    # Create a population of binaries
+    binSana = pop.Binaries(Nbin, model=model, mass_ranges=mass_ranges, alphas=alphas, q_max=q_max, mass_min=mass_min)
+    
+    # Save the population as input for MOBSE
+    binSana.save_mobse_input('mobse', z, 13600, backup)
+
+    type1 = [1] * Nbin
+    type2 = [1] * Nbin
+    tini = [0.0] * Nbin
+
+    # Extract masses and periods from the population
+    m1 = binSana.population.m1  # mass in solar masses
+    m2 = binSana.population.m2  # mass in solar masses
+    p = binSana.population.p  # period in days
+    e = binSana.population.ecc  # eccentricity
+    a = binSana.population.a
+    # convert a from AU to R_sun
+    a = a * 1.496e13 / 6.96e10
+
+    # Calculate semi-major axis (in AU)
+    Z = [z] * Nbin
+
+    # Save to PETAR file with semi-major axis included
+    np.savetxt("petar_" + str(z) + ".in", 
+        np.c_[m1, m2, type1, type2, p, e, a, Z, tini],
+        fmt="%4.4f %4.4f %i %i %15.9f %1.4f %s %1.4f %1.2f",
+        header=str(Nbin - backup), comments='')
+
+def convert_in_to_csv(input_file, output_file):
+    """
+    Convert a .in file to a .csv file.
+
+    Parameters:
+    input_file (str): Path to the input .in file.
+    output_file (str): Path to the output .csv file.
+    """
+    try:
+        # Load the data from the .in file, skipping the first row
+        df = pd.read_csv(input_file, delim_whitespace=True, header=None, skiprows=1)
+
+        # Specify column names based on the expected format
+        # check if name of the file starts with 'petar'
+        if input_file.startswith('petar'):
+            column_names = ['m1', 'm2', 'type1', 'type2', 'period', 'eccentricity', 'a', 'Z', 'tini']
+        else:
+            column_names = ["name", "m1", "m2", "period", "eccentricity", "Z", "tmax"]
+        df.columns = column_names[:df.shape[1]]  # Only set columns that exist
+
+        # Save the DataFrame to a .csv file
+        df.to_csv(output_file, index=False)
+
+        print(f"Conversion successful! Saved as {output_file}")
+
+    except Exception as e:
+        print(f"Error reading the file: {e}")
+
+def run_sevn_simulations(IC_df, num_rows=10, t_end=1000, snmodel="delayed", rseed=0):
+    """
+    Run SEVN simulations for a binary star population.
+
+    Parameters:
+    - csv_file: Path to the CSV file containing the binary star population data (default: "petar_0.2.csv")
+    - num_rows: Number of rows to read from the CSV file (default: 10)
+    - t_end: End time for the SEVN evolution (default: 1000)
+    - snmodel: Supernova model to use (default: "delayed")
+    - rseed: Random seed for reproducibility (default: 0)
+    """
+    SEVNmanager.init()
+    
+    # Read the CSV file
+    df_petar = IC_df.head(num_rows)
+    binary_ids = df_petar['binary_id']
+
+    # Initialize an empty DataFrame to store results
+    results_df = pd.DataFrame()
+
+    # Loop over the arrays with tqdm progress bar
+    for i in tqdm(range(0,num_rows), desc="Running SEVN simulations"):
+        output, log = sevnwrap.evolve_binary(Semimajor=df_petar['a'][i],
+                                            Eccentricity=df_petar['eccentricity'][i],
+                                            Mzams_0=df_petar['m1'][i],
+                                            Z_0=df_petar['Z'][i],
+                                            Mzams_1=df_petar['m2'][i],
+                                            Z_1=df_petar['Z'][i],
+                                            tend=int(t_end),
+                                            snmodel=snmodel,  # SN model to use, see the SEVN userguide
+                                            rseed=rseed  # Random seed for reproducibility, if 0 or not included a random value will be generated
+        ) 
+
+        # Convert output to DataFrame and append binary_id
+        output_df = pd.DataFrame(output)
+        output_df['binary_id'] = binary_ids[i]
+        results_df = pd.concat([results_df, output_df], ignore_index=True)
+
+    # Close SEVN manager
+    SEVNmanager.close()
+
+    return results_df
+
+def process_gaia_data(file_path):
+    """
+    Load and process Gaia data from a CSV file.
+
+    Parameters:
+    file_path (str): Path to the CSV file containing Gaia data.
+
+    Returns:
+    pd.DataFrame: Processed DataFrame with corrected magnitudes and distances.
+    """
+    # Load data in a dataframe
+    cross_df = pd.read_csv(file_path)
+
+    # Correct for extinction and reddening
+    cross_df['G_corrected'] = cross_df['phot_g_mean_mag'] - cross_df['ag_gspphot']
+    cross_df['bp_rp_corrected'] = cross_df['bp_rp'] - cross_df['ebpminrp_gspphot']
+
+    # Calculate distance in parsecs from parallax (parallax is in milliarcseconds)
+    cross_df['distance_pc'] = calculate_distance(cross_df['parallax'])
+
+    # Calculate absolute magnitude M_G
+    cross_df['M_G'] = calculate_absolute_magnitude(cross_df['G_corrected'], cross_df['distance_pc'])
+
+    # Filter out rows with invalid distances (e.g., NaN values)
+    cross_df_filtered = cross_df.dropna(subset=['M_G', 'bp_rp_corrected'])
+
+    return cross_df_filtered
+
+def match_and_update(df, cross_df_filtered):
+    """
+    Match rows from df with cross_df_filtered using nearest neighbor search and update df with matched values.
+
+    Parameters:
+    df (pd.DataFrame): DataFrame containing the original data.
+    cross_df_filtered (pd.DataFrame): DataFrame containing the filtered cross-matched data.
+
+    Returns:
+    pd.DataFrame: Updated DataFrame with matched M_G and bp_rp_corrected values.
+    """
+    # Select the columns to match on from both dataframes
+    df_coords = df[['P', 'pllx', 'ruwe']].to_numpy()
+    cross_df_coords = cross_df_filtered[['period', 'parallax', 'ruwe']].to_numpy()
+
+    # Remove rows with NaN or infinite values from both dataframes
+    df_clean = df[['P', 'pllx', 'ruwe']].replace([np.inf, -np.inf], np.nan).dropna()
+    cross_df_clean = cross_df_filtered[['period', 'parallax', 'ruwe']].replace([np.inf, -np.inf], np.nan).dropna()
+
+    # Create a KDTree for fast nearest neighbor search
+    tree = cKDTree(cross_df_clean.to_numpy())
+
+    # Find the nearest match in cross_df_filtered for each row in df_clean
+    distances, indices = tree.query(df_clean.to_numpy())
+
+    # Add the matched M_G and bp_rp_corrected values from cross_df_filtered back to df
+    df.loc[df_clean.index, 'M_G'] = cross_df_filtered.iloc[indices]['M_G'].values
+    df.loc[df_clean.index, 'bp_rp_corrected'] = cross_df_filtered.iloc[indices]['bp_rp_corrected'].values
+
+    return df
