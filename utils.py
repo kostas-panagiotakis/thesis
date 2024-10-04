@@ -26,6 +26,8 @@ from sevnpy.sevn import SEVNmanager, sevnwrap
 from tqdm import tqdm
 from IC4popsyn.ic4popsyn import populations as pop
 from scipy.spatial import cKDTree
+from IPython.display import Image, display
+
 
                                                             #################### CONSTANTS ####################
 
@@ -359,6 +361,30 @@ def plot_scatter_with_colorbar(df, x_col, y_col, color_col, remnant_type, figsiz
     # Show the plot
     plt.show()
 
+def plot_scatter_with_colorbar_combined(df, x_col, y_col, color_col, color_dict, ax, legend_loc='best'):
+    """
+    Plot a scatter plot with a colorbar.
+
+    Parameters:
+    df (pd.DataFrame): DataFrame containing the data.
+    x_col (str): Column name for the x-axis.
+    y_col (str): Column name for the y-axis.
+    color_col (str): Column name for the color coding.
+    color_dict (dict): Dictionary for color coding.
+    ax (matplotlib.axes.Axes): Axes object to plot on.
+    legend_loc (str): Location of the legend.
+    """
+    scatter = ax.scatter(df[x_col], df[y_col], c=df[color_col], cmap='Spectral_r', s=1)
+    cbar = plt.colorbar(scatter, ax=ax, ticks=list(color_dict.keys()))
+    cbar.ax.set_yticklabels(list(color_dict.values()))
+    cbar.set_label(color_col)
+    ax.set_xlabel(x_col)
+    ax.set_ylabel(y_col)
+    ax.set_title(f'{x_col} vs {y_col}')
+    ax.legend(loc=legend_loc)
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+
 def plot_hr_diagrams(df, cross_df_filtered):
     """
     Plot Hertzsprung-Russell diagrams with various color codings.
@@ -371,8 +397,8 @@ def plot_hr_diagrams(df, cross_df_filtered):
     df['P'] = df['P'] / 365.25
 
     # Define the remnant type dictionary
-    remnant_type = {0: "PreMS - 0", 1: "MS - 1", 2: "TerminalMS - 2", 3: "ShellHBurning - 3", 4: "CoreHeBurning - 4",
-                    5: "TerminalCoreHeBurning - 5", 6: "ShellHeBurning - 6", 7: "CO - 7"}
+    remnant_type = {0: "NotARemnant - 0", 1: "HeWD - 1", 2: "COWD - 2", 3: "ONeWD - 3", 4: "NS_ECSN - 4",
+                5: "NS_CCSN - 5", 6: "BH - 6", -1: "Empty - -1"}
 
     # Create subplots
     fig, axs = plt.subplots(2, 3, figsize=(22, 12))
@@ -435,7 +461,7 @@ def plot_hr_diagrams(df, cross_df_filtered):
     axs[1, 2].scatter(cross_df_filtered['bp_rp_corrected'], cross_df_filtered['M_G'], s=1, c='k', alpha=0.5)
     sc6 = axs[1, 2].scatter(df['bp_rp_corrected'], df['M_G'], c=df['P'], cmap='Spectral_r', s=1, norm=norm_period)
     cbar = fig.colorbar(sc6, ax=axs[1, 2])
-    cbar.set_label('Period (log scale) (Yrs)')
+    cbar.set_label('Period (log scale) (Myrs)')
     axs[1, 2].invert_yaxis()
     axs[1, 2].set_xlabel('(BP - RP) Corrected Color')
     axs[1, 2].set_ylabel('M_G (Absolute G Magnitude)')
@@ -661,7 +687,7 @@ def gaia_observation(nTest, evolved_binaries, astromet, Source, dr3_sl, alError=
         
         phis = np.squeeze(np.hstack(sl['angles']))[sort]
         
-        params.parallax = evolved_binaries['Parallax'][i]  # parallax in mas
+        params.parallax = 10*np.power(np.random.rand(),-1/3)  # parallax in mas
         params.pmrac = params.parallax * (1) * np.random.randn()
         params.pmdec = params.parallax * (1) * np.random.randn()
         params.mass_1 = evolved_binaries['Mass_0'][i]  # primary mass in Msun
@@ -963,7 +989,7 @@ M_sun = 1.989e30  # Mass of the sun in kg
 AU = 1.496e11  # Astronomical unit in meters
 day_to_sec = 86400  # Conversion from days to seconds
 
-def create_binary_population(Nbin=100001, backup=1, z=0.02, mass_ranges=[2.3, 100], alphas=[-2.3], q_max=4.0, mass_min=2.3, model='sana12'):
+def create_binary_population(Nbin=100001, backup=1, z=0.02, mass_ranges=[2.3, 100], alphas=[-2.3], q_max=4.0, mass_min=2.3, model='sana12', period_units='day'):
     """
     Create a population of binary stars and save the data to a PETAR file.
 
@@ -976,6 +1002,7 @@ def create_binary_population(Nbin=100001, backup=1, z=0.02, mass_ranges=[2.3, 10
     - q_max: Maximum mass ratio (default: 4.0)
     - mass_min: Minimum mass (default: 2.3)
     - model: Model to use for the binary population (default: 'sana12')
+    - period_units: Units for the period ('Myr', 'yr', 'day') (default: 'day')
     """
     # Create a population of binaries
     binSana = pop.Binaries(Nbin, model=model, mass_ranges=mass_ranges, alphas=alphas, q_max=q_max, mass_min=mass_min)
@@ -988,13 +1015,21 @@ def create_binary_population(Nbin=100001, backup=1, z=0.02, mass_ranges=[2.3, 10
     tini = [0.0] * Nbin
 
     # Extract masses and periods from the population
-    m1 = binSana.population.m1  # mass in solar masses
-    m2 = binSana.population.m2  # mass in solar masses
-    p = binSana.population.p  # period in days
-    e = binSana.population.ecc  # eccentricity
-    a = binSana.population.a
-    # convert a from AU to R_sun
-    a = a * 1.496e13 / 6.96e10
+    m1 = binSana.population['m1']  # mass in solar masses
+    m2 = binSana.population['m2']  # mass in solar masses
+    e = binSana.population['ecc']  # eccentricity
+
+    # Convert periods to the desired units
+    if period_units == 'Myr':
+        p = binSana.population['p'] / (365.25 * 1e6)  # Convert days to Myr
+    elif period_units == 'yr':
+        p = binSana.population['p'] / 365.25  # Convert days to years
+    elif period_units == 'day':
+        p = binSana.population['p'] 
+    else:
+        raise ValueError("Invalid period_units. Choose from 'Myr', 'yr', or 'day'.")
+    
+    a = binSana.population['a']
 
     # Calculate semi-major axis (in AU)
     Z = [z] * Nbin
