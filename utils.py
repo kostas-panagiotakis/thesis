@@ -13,6 +13,7 @@ import scanninglaw.times
 from scanninglaw.source import Source
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 from matplotlib.colors import LogNorm
 from matplotlib.ticker import MultipleLocator, FuncFormatter
 from sklearn.model_selection import train_test_split, learning_curve
@@ -27,6 +28,8 @@ from tqdm import tqdm
 from IC4popsyn.ic4popsyn import populations as pop
 from scipy.spatial import cKDTree
 from IPython.display import Image, display
+from sevnpy.sevn import Star, SEVNmanager
+
 
 
                                                             #################### CONSTANTS ####################
@@ -374,7 +377,7 @@ def plot_scatter_with_colorbar_combined(df, x_col, y_col, color_col, color_dict,
     ax (matplotlib.axes.Axes): Axes object to plot on.
     legend_loc (str): Location of the legend.
     """
-    scatter = ax.scatter(df[x_col], df[y_col], c=df[color_col], cmap='Spectral_r', s=1)
+    scatter = ax.scatter(df[x_col], df[y_col], c=df[color_col], cmap='Spectral_r', s=20)
     cbar = plt.colorbar(scatter, ax=ax, ticks=list(color_dict.keys()))
     cbar.ax.set_yticklabels(list(color_dict.values()))
     cbar.set_label(color_col)
@@ -461,7 +464,7 @@ def plot_hr_diagrams(df, cross_df_filtered):
     axs[1, 2].scatter(cross_df_filtered['bp_rp_corrected'], cross_df_filtered['M_G'], s=1, c='k', alpha=0.5)
     sc6 = axs[1, 2].scatter(df['bp_rp_corrected'], df['M_G'], c=df['P'], cmap='Spectral_r', s=1, norm=norm_period)
     cbar = fig.colorbar(sc6, ax=axs[1, 2])
-    cbar.set_label('Period (log scale) (Myrs)')
+    cbar.set_label('Period (log scale) (yrs)')
     axs[1, 2].invert_yaxis()
     axs[1, 2].set_xlabel('(BP - RP) Corrected Color')
     axs[1, 2].set_ylabel('M_G (Absolute G Magnitude)')
@@ -652,136 +655,6 @@ def simulate_gaia(nTest=10000, alError=1):
         # thisRow['frac_good'] = results['astrometric_n_good_obs_al'] / results['astrometric_n_obs_al']
         thisRow['N_vis'] = results['visibility_periods_used']
         # thisRow['AEN'] = results['astrometric_excess_noise']
-
-    return allData
-
-def gaia_observation(nTest, evolved_binaries, astromet, Source, dr3_sl, alError=1):
-    dataNames = ('RA', 'Dec', 'pmRA', 'pmDec', 'pllx', 'M_1', 'M_2',
-                 'M_tot', 'q', 'l', 'a', 'e', 'P', 'tPeri',
-                 'Luminosity_0','Luminosity_1', 'Temperature_0', 'Temperature_1',
-                 'vTheta', 'vPhi', 'vOmega',
-                 'predict_dTheta', 'simple_dTheta',
-                 'N_obs', 'sigma_al', 'sigma_ac',
-                 'fit_ra', 'fit_dec', 'fit_pmrac', 'fit_pmdec', 'fit_pllx',
-                 'sigma_rac', 'sigma_dec', 'sigma_pmrac', 'sigma_pmdec', 'sigma_pllx',
-                 'N_vis', 'frac_good', 'AEN', 'UWE', 'ast_errors', 'rv_errors',
-                 'astrometric_chi2_al', 'astrometric_n_good_obs_al', 'astrometric_params_solved',
-                 'ruwe', 'RemnantType_0', 'RemnantType_1'
-                )
-    
-    allData = astropy.table.Table(names=dataNames)
-
-    for i in tqdm(range(nTest)):
-        allData.add_row()
-        thisRow = allData[i]
-        
-        params = astromet.params()
-        params.ra = 360 * np.random.rand(1)[0]
-        params.dec = 180 / np.pi * np.arcsin(np.random.uniform(low=-1, high=1))
-        
-        c = Source(params.ra, params.dec, unit='deg')
-        sl = dr3_sl(c, return_times=True, return_angles=True)
-        ts = 2010 + np.squeeze(np.hstack(sl['times'])) / 365.25
-        sort = np.argsort(ts)
-        ts = np.double(ts[sort])
-        
-        phis = np.squeeze(np.hstack(sl['angles']))[sort]
-        
-        params.parallax = 10*np.power(np.random.rand(),-1/3)  # parallax in mas
-        params.pmrac = params.parallax * (1) * np.random.randn()
-        params.pmdec = params.parallax * (1) * np.random.randn()
-        params.mass_1 = evolved_binaries['Mass_0'][i]  # primary mass in Msun
-        params.mass_2 = evolved_binaries['Mass_1'][i]  # secondary mass in Msun
-        params.period = evolved_binaries['Period'][i]  # periods between 0.03 and 30 years
-        params.l = evolved_binaries['l'][i]  # uniform light ratio
-        params.q = evolved_binaries['q'][i]  # uniform mass ratio
-        params.a = evolved_binaries['Semimajor'][i]  # semi-major axis in AU  
-        params.e = evolved_binaries['Eccentricity'][i]  # eccentricity
-        params.L_0 = evolved_binaries['Luminosity_0'][i]  # primary luminosity in Lsun
-        params.L_1 = evolved_binaries['Luminosity_1'][i]  # secondary luminosity in Lsun
-        params.T_0 = evolved_binaries['Temperature_0'][i]  # primary temperature in K
-        params.T_1 = evolved_binaries['Temperature_1'][i]  # secondary temperature in K
-        params.vtheta = np.arccos(-1 + 2 * np.random.rand())
-        params.vphi = 2 * np.pi * np.random.rand()
-        params.vomega = 2 * np.pi * np.random.rand()
-        orbitalPhase = np.random.rand()  # fraction of an orbit completed at t=0
-        params.tperi = params.period * orbitalPhase
-        params.ast_errors = 10 ** np.random.uniform(-2, 4)
-        params.rv_errors = 10 ** 3 * 10 ** np.random.uniform(-3, 2)
-        params.remnant_type_0 = evolved_binaries['RemnantType_0'][i]
-        params.remnant_type_1 = evolved_binaries['RemnantType_1'][i]
-        
-        thisRow['RA'] = float(params.ra)
-        thisRow['Dec'] = float(params.dec)
-        thisRow['pmRA'] = float(params.pmrac)
-        thisRow['pmDec'] = float(params.pmdec)
-        thisRow['pllx'] = float(params.parallax)
-        thisRow['M_1'] = float(params.mass_1)
-        thisRow['M_2'] = float(params.mass_2)
-        thisRow['M_tot'] = float(params.mass_1 + params.mass_2)
-        thisRow['q'] = float(params.q)
-        thisRow['l'] = float(params.l)
-        thisRow['a'] = float(params.a)
-        thisRow['e'] = float(params.e)
-        thisRow['P'] = float(params.period)
-        thisRow['Luminosity_0'] = float(params.L_0)
-        thisRow['Luminosity_1'] = float(params.L_1)
-        thisRow['Temperature_0'] = float(params.T_0)
-        thisRow['Temperature_1'] = float(params.T_1)
-        thisRow['tPeri'] = float(params.tperi)
-        thisRow['vTheta'] = float(params.vtheta)
-        thisRow['vPhi'] = float(params.vphi)
-        thisRow['vOmega'] = float(params.vomega)
-        thisRow['sigma_al'] = float(alError)
-        #thisRow['sigma_ac'] = float(acError)
-        thisRow['ast_errors'] = float(params.ast_errors)
-        thisRow['rv_errors'] = float(params.rv_errors)
-        thisRow['RemnantType_0'] = float(params.remnant_type_0)
-        thisRow['RemnantType_1'] = float(params.remnant_type_1)
-
-        trueRacs, trueDecs = astromet.track(ts, params)
-
-        # added .astype(float) to avoid astromet error
-        phis = phis.astype(float)
-        
-        t_obs, x_obs, phi_obs, rac_obs, dec_obs = astromet.mock_obs(ts, phis, trueRacs, trueDecs, err=alError)
-        
-        fitresults = astromet.fit(t_obs, x_obs, phi_obs, alError, params.ra, params.dec)
-        results = astromet.gaia_results(fitresults)
-        
-        # print('ra, dec, pllx, pmrac, pmdec ', params.ra, params.dec, params.parallax, params.pmrac, params.pmdec)
-        # print(results)
-        
-        # bug somewhere in these
-        #thisRow['simple_dTheta'] = astromet.dtheta_simple(params)
-        #thisRow['predict_dTheta'] = astromet.dtheta_full(params, np.min(ts), np.max(ts))  
-        
-        thisRow['fit_ra'] = float(results['ra'])
-        thisRow['fit_dec'] = float(results['dec'])
-        thisRow['fit_pmrac'] = float(results['pmra'])
-        thisRow['fit_pmdec'] = float(results['pmdec'])
-        thisRow['fit_pllx'] = float(results['parallax'])
-
-        thisRow['sigma_rac'] = float(results['ra_error'])
-        thisRow['sigma_dec'] = float(results['dec_error'])
-        thisRow['sigma_pmrac'] = float(results['pmra_error'])
-        thisRow['sigma_pmdec'] = float(results['pmdec_error'])
-        thisRow['sigma_pllx'] = float(results['parallax_error'])
-        thisRow['astrometric_chi2_al'] = float(results['astrometric_chi2_al'])
-        thisRow['astrometric_n_good_obs_al'] = float(results['astrometric_n_good_obs_al'])
-        thisRow['astrometric_params_solved'] = float(results['astrometric_params_solved'])
-
-        # results['UWE'] --> results['uwe']
-        # uwe = np.linalg.norm(pos - np.matmul(design, fitparams)) / (errs * np.sqrt(2 * len(ts) - 5))
-        thisRow['UWE'] = float(results['uwe'])
-
-        thisRow['N_obs'] = float(results['astrometric_n_obs_al'])
-        # thisRow['frac_good'] = results['astrometric_n_good_obs_al'] / results['astrometric_n_obs_al']
-        thisRow['N_vis'] = float(results['visibility_periods_used'])
-        # thisRow['AEN'] = results['astrometric_excess_noise']
-
-        # calculate ruwe
-        thisRow['ruwe'] = np.sqrt(results['astrometric_chi2_al'] / (results['astrometric_n_good_obs_al'] - results['astrometric_params_solved']))
 
     return allData
                                                     #################### Missing Data Inference ####################
@@ -1068,49 +941,6 @@ def convert_in_to_csv(input_file, output_file):
     except Exception as e:
         print(f"Error reading the file: {e}")
 
-def run_sevn_simulations(IC_df, num_rows=10, t_end=1000, snmodel="delayed", rseed=0):
-    """
-    Run SEVN simulations for a binary star population.
-
-    Parameters:
-    - csv_file: Path to the CSV file containing the binary star population data (default: "petar_0.2.csv")
-    - num_rows: Number of rows to read from the CSV file (default: 10)
-    - t_end: End time for the SEVN evolution (default: 1000)
-    - snmodel: Supernova model to use (default: "delayed")
-    - rseed: Random seed for reproducibility (default: 0)
-    """
-    SEVNmanager.init()
-    
-    # Read the CSV file
-    df_petar = IC_df.head(num_rows)
-    binary_ids = df_petar['binary_id']
-
-    # Initialize an empty DataFrame to store results
-    results_df = pd.DataFrame()
-
-    # Loop over the arrays with tqdm progress bar
-    for i in tqdm(range(0,num_rows), desc="Running SEVN simulations"):
-        output, log = sevnwrap.evolve_binary(Semimajor=df_petar['a'][i],
-                                            Eccentricity=df_petar['eccentricity'][i],
-                                            Mzams_0=df_petar['m1'][i],
-                                            Z_0=df_petar['Z'][i],
-                                            Mzams_1=df_petar['m2'][i],
-                                            Z_1=df_petar['Z'][i],
-                                            tend=int(t_end),
-                                            snmodel=snmodel,  # SN model to use, see the SEVN userguide
-                                            rseed=rseed  # Random seed for reproducibility, if 0 or not included a random value will be generated
-        ) 
-
-        # Convert output to DataFrame and append binary_id
-        output_df = pd.DataFrame(output)
-        output_df['binary_id'] = binary_ids[i]
-        results_df = pd.concat([results_df, output_df], ignore_index=True)
-
-    # Close SEVN manager
-    SEVNmanager.close()
-
-    return results_df
-
 def process_gaia_data(file_path):
     """
     Load and process Gaia data from a CSV file.
@@ -1169,3 +999,537 @@ def match_and_update(df, cross_df_filtered):
     df.loc[df_clean.index, 'bp_rp_corrected'] = cross_df_filtered.iloc[indices]['bp_rp_corrected'].values
 
     return df
+
+
+                                                        #################### popsynth ########################
+
+# Constants
+G = 6.674e-11  # Gravitational constant in m^3/kg/s^2
+M_sun = 1.989e30  # Mass of the sun in kg
+AU = 1.496e11  # Astronomical unit in meters
+day_to_sec = 86400  # Conversion from days to seconds
+
+def ic_pop_synth(Nbin=100001, backup=1, z=0.0014, system_type=False, mass_ranges=[2.3, 100], 
+                            alphas=[-2.3], q_max=4.0, mass_min=2.3, model='sana12', period_units='day'):
+    """
+    Create a population of binary stars and save the data to a PETAR file.
+
+    Parameters:
+    - Nbin: Number of binary systems (default: 100001)
+    - backup: Number of backup systems (default: 1)
+    - z: Metallicity (default: 0.0014 or [Fe/H] = -1.0)
+    - system_type: Type of system to generate (default: False)
+    - mass_ranges: List of mass ranges for the initial mass function (default: [0.1,0.5,150])
+    - alphas: List of power-law slopes for the initial mass function (default: [-2.3])
+    - q_max: Maximum mass ratio (default: 4.0)
+    - mass_min: Minimum mass (default: 2.3)
+    - model: Model to use for the binary population (default: 'sana12')
+    - period_units: Units for the period ('Myr', 'yr', 'day') (default: 'day')
+    """
+    # Create a population of binaries
+    if system_type == False:
+        binSana = pop.Binaries(Nbin, single_pop=system_type, model=model, mass_ranges=mass_ranges, 
+                           alphas=alphas, q_max=q_max, mass_min=mass_min)
+        # Save the population as input for MOBSE
+        binSana.save_mobse_input('mobse', z, 13600, backup)
+
+        type1 = [1] * Nbin
+        type2 = [1] * Nbin
+        tini = [0.0] * Nbin
+
+        # Extract masses and periods from the population
+        m1 = binSana.population['m1']  # mass in solar masses
+        m2 = binSana.population['m2']  # mass in solar masses
+        e = binSana.population['ecc']  # eccentricity
+
+        # Convert periods to the desired units
+        if period_units == 'Myr':
+            p = binSana.population['p'] / (365.25 * 1e6)  # Convert days to Myr
+        elif period_units == 'yr':
+            p = binSana.population['p'] / 365.25  # Convert days to years
+        elif period_units == 'day':
+            p = binSana.population['p'] 
+        else:
+            raise ValueError("Invalid period_units. Choose from 'Myr', 'yr', or 'day'.")
+        
+        a = binSana.population['a']
+
+        Z = np.full(Nbin, z)
+
+        # Save to PETAR file with semi-major axis included
+        np.savetxt("ic4_" + "binary" + "_" + str(z) + ".in", 
+            np.c_[m1, m2, type1, type2, p, e, a, Z, tini],
+            fmt="%4.4f %4.4f %i %i %15.9f %1.4f %s %1.4f %1.2f",
+            header=str(Nbin - backup), comments='')
+    else:
+        binSana = pop.Binaries(Nbin, single_pop=system_type, model=model, mass_ranges=mass_ranges, 
+                           alphas=alphas)
+        
+        # Save the population as input for MOBSE
+        binSana.save_mobse_input('mobse', z, 13600, backup)
+
+        type1 = [1] * Nbin
+        type2 = [1] * Nbin
+        tini = [0.0] * Nbin
+
+        # Extract masses and periods from the population
+        m1 = binSana.population['m1']  # mass in solar masses
+
+        Z = np.full(Nbin, z)
+
+        # Save to PETAR file with semi-major axis included
+        np.savetxt("ic4_" + "single" + "_" + str(z) + ".in", 
+            np.c_[m1, type1, type2, Z, tini],
+            fmt="%4.4f %i %i %1.4f %1.2f",
+            header=str(Nbin - backup), comments='')
+        
+def convert_in_to_csv(input_file, output_file):
+    # """
+    # Convert a .in file to a .csv file.
+
+    # Parameters:
+    # input_file (str): Path to the input .in file.
+    # output_file (str): Path to the output .csv file.
+    # """
+    try:
+        # Load the data from the .in file, skipping the first row
+        df = pd.read_csv(input_file, sep='\s+', header=None, skiprows=1)
+
+        # Specify column names based on the expected format
+        if input_file.startswith('ic4_binary'):
+            column_names = ['m1', 'm2', 'type1', 'type2', 'period', 'eccentricity', 'a', 'Z', 'tini']
+        elif input_file.startswith('ic4_single'):
+            column_names = ['m1', 'type1', 'type2', 'Z', 'tini']
+        else:
+            column_names = ["name", "m1", "m2", "period", "eccentricity", "Z", "tmax"]
+        
+        # Ensure the number of columns matches
+        df.columns = column_names[:df.shape[1]]  # Only set columns that exist
+
+        # Save the DataFrame to a .csv file
+        df.to_csv(output_file, index=False)
+
+        print(f"Conversion successful! Saved as {output_file}")
+
+    except Exception as e:
+        print(f"Error reading the file: {e}")
+
+def process_binary_population(z, system_type):
+    """
+    Process a binary population file and add a binary_id column.
+
+    Parameters:
+    - z: Metallicity
+    - system_type: Type of the system (e.g., "binary", "single")
+    """
+    # Use the variable in the function calls and file names
+    input_file = f"ic4_{system_type}_{z}.in"
+    output_file = f"ic4_{system_type}_{z}.csv"
+
+    convert_in_to_csv(input_file, output_file)
+
+    ic_df = pd.read_csv(output_file)
+
+    # add a column to df_petar for binary_id equal to the index place it at the beginning
+    ic_df.insert(0, str(system_type)+"_id", range(0, 0 + len(ic_df)))
+
+    return ic_df
+
+def run_sevn_simulations(IC_df, num_rows=10, system_type="binary", t_end=1.35e5, snmodel="delayed", rseed=0, num_binary=101):
+    """
+    Run SEVN simulations for a binary star population.
+
+    Parameters:
+    - csv_file: Path to the CSV file containing the binary star population data (default: "petar_0.2.csv")
+    - num_rows: Number of rows to read from the CSV file (default: 10)
+    - t_end: End time for the SEVN evolution (default: Hubble time in Myr)
+    - snmodel: Supernova model to use (default: "delayed")
+    - rseed: Random seed for reproducibility (default: 0)
+    """
+    SEVNmanager.init()
+    
+    # Read the CSV file
+    df = IC_df.head(num_rows)
+
+    if system_type == "binary":
+        binary_ids = df['binary_id']
+
+        # Initialize an empty DataFrame to store results
+        results_df = pd.DataFrame()
+
+        # Loop over the arrays with tqdm progress bar
+        for i in tqdm(range(0,num_rows), desc="Running SEVN simulations"):
+            output, log = sevnwrap.evolve_binary(Semimajor=df['a'][i],
+                                                Eccentricity=df['eccentricity'][i],
+                                                Mzams_0=df['m1'][i],
+                                                Z_0=df['Z'][i],
+                                                Mzams_1=df['m2'][i],
+                                                Z_1=df['Z'][i],
+                                                tend=int(t_end),
+                                                snmodel=snmodel,  # SN model to use, see the SEVN userguide
+                                                rseed=rseed  # Random seed for reproducibility, if 0 or not included a random value will be generated
+            ) 
+
+            # Convert output to DataFrame and append binary_id
+            output_df = pd.DataFrame(output)
+            output_df['binary_id'] = binary_ids[i]
+            results_df = pd.concat([results_df, output_df], ignore_index=True)
+            results_df['system_type'] = 2
+
+
+    else:
+
+        single_ids = df['single_id']
+        # Initialize an empty DataFrame to store results
+        results_df = pd.DataFrame()
+
+        # Loop over the arrays with tqdm progress bar
+        for i in tqdm(range(0, num_rows), desc="Running SEVN simulations"):
+            single_star = Star(df['m1'][i], df['Z'][i])
+            single_star.evolve(tend=t_end)
+            evolved_single = single_star.evolve_table
+            evolved_single['single_id'] = single_ids[i] + num_binary
+            results_df = pd.concat([results_df, evolved_single], ignore_index=True)
+            results_df['system_type'] = 1
+
+    # Close SEVN manager
+    SEVNmanager.close()
+
+    return results_df
+
+def plot_remnant_distributions(df):
+    """
+    Plot the distributions of remnant types for binary and single stars.
+    
+    Parameters:
+    - df: DataFrame containing the 'system_type' and 'RemnantType_0', 'RemnantType_1' columns.
+    """
+    # Calculate the total counts
+    binary_count = len(df[df['system_type'] == 2])
+    single_count = len(df[df['system_type'] == 1])
+
+    # Plot the distributions
+    fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+
+    # Plot for binary stars
+    sns.histplot(df[df['system_type'] == 2]['RemnantType_0'], ax=ax[0], color='blue', label='Primary')
+    sns.histplot(df[df['system_type'] == 2]['RemnantType_1'], ax=ax[0], color='red', label='Secondary')
+    ax[0].set_title(f'Binary Stars (Total: {binary_count})')
+    ax[0].set_xlabel('Remnant Type')
+    ax[0].set_ylabel('Count')
+    ax[0].legend()
+
+    # Plot for single stars
+    sns.histplot(df[df['system_type'] == 1]['RemnantType_0'], ax=ax[1], color='blue', label='Single Stars')
+    ax[1].set_title(f'Single Stars (Total: {single_count})')
+    ax[1].set_xlabel('Remnant Type')
+    ax[1].set_ylabel('Count')
+    ax[1].legend()
+
+    # Adjust layout and show plot
+    plt.tight_layout()
+    plt.show()
+
+def gaia_observation(nTest, evolved_systems, astromet, Source, dr3_sl, alError=1, show_plot=False):
+    dataNames = ('RA', 'Dec', 'pmRA', 'pmDec', 'pllx', 'M_1', 'M_2',
+                 'M_tot', 'q', 'l', 'a', 'e', 'P', 'tPeri',
+                 'Luminosity_0','Luminosity_1', 'Temperature_0', 'Temperature_1',
+                 'vTheta', 'vPhi', 'vOmega',
+                 'predict_dTheta', 'simple_dTheta',
+                 'N_obs', 'sigma_al', 'sigma_ac',
+                 'fit_ra', 'fit_dec', 'fit_pmrac', 'fit_pmdec', 'fit_pllx',
+                 'sigma_rac', 'sigma_dec', 'sigma_pmrac', 'sigma_pmdec', 'sigma_pllx',
+                 'N_vis', 'frac_good', 'AEN', 'UWE',
+                 'astrometric_chi2_al', 'astrometric_n_good_obs_al', 'astrometric_params_solved',
+                 'ruwe', 'RemnantType_0', 'RemnantType_1', 'log_sg_0', 'log_sg_1', 'system_type'
+                )
+    
+    allData = astropy.table.Table(names=dataNames)
+
+    for i in tqdm(range(nTest)):
+        allData.add_row()
+        thisRow = allData[i]
+        
+        params = astromet.params()
+        params.ra = 360 * np.random.rand(1)[0]
+        params.dec = 180 / np.pi * np.arcsin(np.random.uniform(low=-1, high=1))
+        
+        c = Source(params.ra, params.dec, unit='deg')
+        sl = dr3_sl(c, return_times=True, return_angles=True)
+        ts = 2010 + np.squeeze(np.hstack(sl['times'])) / 365.25
+        sort = np.argsort(ts)
+        ts = np.double(ts[sort])
+        
+        phis = np.squeeze(np.hstack(sl['angles']))[sort]
+        
+        params.parallax = 10*np.power(np.random.rand(),-1/3)  # parallax in mas
+        params.pmrac = params.parallax * (1) * np.random.randn()
+        params.pmdec = params.parallax * (1) * np.random.randn()
+        params.mass_1 = evolved_systems['Mass_0'][i]  # primary mass in Msun
+        params.mass_2 = evolved_systems['Mass_1'][i]  # secondary mass in Msun
+        params.period = evolved_systems['Period'][i]  # periods between 0.03 and 30 years
+        params.l = evolved_systems['l'][i]  # uniform light ratio
+        params.q = evolved_systems['q'][i]  # uniform mass ratio
+        params.a = evolved_systems['Semimajor'][i]  # semi-major axis in AU  
+        params.e = evolved_systems['Eccentricity'][i]  # eccentricity
+        params.L_0 = evolved_systems['Luminosity_0'][i]  # primary luminosity in Lsun
+        params.L_1 = evolved_systems['Luminosity_1'][i]  # secondary luminosity in Lsun
+        params.T_0 = evolved_systems['Temperature_0'][i]  # primary temperature in K
+        params.T_1 = evolved_systems['Temperature_1'][i]  # secondary temperature in K
+        params.vtheta = np.arccos(-1 + 2 * np.random.rand())
+        params.vphi = 2 * np.pi * np.random.rand()
+        params.vomega = 2 * np.pi * np.random.rand()
+        orbitalPhase = np.random.rand()  # fraction of an orbit completed at t=0
+        params.tperi = params.period * orbitalPhase
+        params.remnant_type_0 = evolved_systems['RemnantType_0'][i]
+        params.remnant_type_1 = evolved_systems['RemnantType_1'][i]
+        params.system_type = evolved_systems['system_type'][i]
+        
+        thisRow['RA'] = float(params.ra)
+        thisRow['Dec'] = float(params.dec)
+        thisRow['pmRA'] = float(params.pmrac)
+        thisRow['pmDec'] = float(params.pmdec)
+        thisRow['pllx'] = float(params.parallax)
+        thisRow['M_1'] = float(params.mass_1)
+        thisRow['M_2'] = float(params.mass_2)
+        thisRow['M_tot'] = float(params.mass_1 + params.mass_2)
+        thisRow['q'] = float(params.q)
+        thisRow['l'] = float(params.l)
+        thisRow['a'] = float(params.a)
+        thisRow['e'] = float(params.e)
+        thisRow['P'] = float(params.period)
+        thisRow['Luminosity_0'] = float(params.L_0)
+        thisRow['Luminosity_1'] = float(params.L_1)
+        thisRow['Temperature_0'] = float(params.T_0)
+        thisRow['Temperature_1'] = float(params.T_1)
+        thisRow['tPeri'] = float(params.tperi)
+        thisRow['vTheta'] = float(params.vtheta)
+        thisRow['vPhi'] = float(params.vphi)
+        thisRow['vOmega'] = float(params.vomega)
+        thisRow['sigma_al'] = float(alError)
+        #thisRow['sigma_ac'] = float(acError)
+        thisRow['RemnantType_0'] = float(params.remnant_type_0)
+        thisRow['RemnantType_1'] = float(params.remnant_type_1)
+        # add log_sg_0 and log_sg_1
+        thisRow['log_sg_0'] = evolved_systems['log_sg_0'][i]
+        thisRow['log_sg_1'] = evolved_systems['log_sg_1'][i]
+        thisRow['system_type'] = evolved_systems['system_type'][i]
+
+        # Astrometric track in RAcos(Dec) and Dec [mas] for a given binary (or lensing event)
+        if thisRow['system_type'] == 2:
+            trueRacs, trueDecs = astromet.track(ts, params)
+        if thisRow['system_type'] == 1:
+            # comOnly: bool - If True return only c.o.m track (no binary)
+            trueRacs, trueDecs = astromet.track(ts, params, comOnly=True)
+
+        # added .astype(float) to avoid astromet error
+        phis = phis.astype(float)
+        
+        #Converts positions to comparable observables to real astrometric measurements
+        t_obs, x_obs, phi_obs, rac_obs, dec_obs = astromet.mock_obs(ts, phis, trueRacs, trueDecs, err=alError)
+        
+        # Iterative optimization to fit astrometric solution in AGIS (outer iteration).
+        fitresults = astromet.fit(t_obs, x_obs, phi_obs, alError, params.ra, params.dec)
+        results = astromet.gaia_results(fitresults)
+        
+        # print('ra, dec, pllx, pmrac, pmdec ', params.ra, params.dec, params.parallax, params.pmrac, params.pmdec)
+        # print(results)
+        
+        # bug somewhere in these
+        #thisRow['simple_dTheta'] = astromet.dtheta_simple(params)
+        #thisRow['predict_dTheta'] = astromet.dtheta_full(params, np.min(ts), np.max(ts))  
+        
+        thisRow['fit_ra'] = float(results['ra'])
+        thisRow['fit_dec'] = float(results['dec'])
+        thisRow['fit_pmrac'] = float(results['pmra'])
+        thisRow['fit_pmdec'] = float(results['pmdec'])
+        thisRow['fit_pllx'] = float(results['parallax'])
+
+        thisRow['sigma_rac'] = float(results['ra_error'])
+        thisRow['sigma_dec'] = float(results['dec_error'])
+        thisRow['sigma_pmrac'] = float(results['pmra_error'])
+        thisRow['sigma_pmdec'] = float(results['pmdec_error'])
+        thisRow['sigma_pllx'] = float(results['parallax_error'])
+        # proportional to residual between observed positions and fitted positions
+        thisRow['astrometric_chi2_al'] = float(results['astrometric_chi2_al'])
+        thisRow['astrometric_n_good_obs_al'] = float(results['astrometric_n_good_obs_al'])
+        thisRow['astrometric_params_solved'] = float(results['astrometric_params_solved'])
+
+        # results['UWE'] --> results['uwe']
+        # uwe = np.linalg.norm(pos - np.matmul(design, fitparams)) / (errs * np.sqrt(2 * len(ts) - 5))
+        thisRow['UWE'] = float(results['uwe'])
+
+        thisRow['N_obs'] = float(results['astrometric_n_obs_al'])
+        # thisRow['frac_good'] = results['astrometric_n_good_obs_al'] / results['astrometric_n_obs_al']
+        thisRow['N_vis'] = float(results['visibility_periods_used'])
+        # thisRow['AEN'] = results['astrometric_excess_noise']
+
+        # calculate ruwe
+        thisRow['ruwe'] = np.sqrt(results['astrometric_chi2_al'] / (results['astrometric_n_good_obs_al'] - results['astrometric_params_solved']))
+
+        if show_plot:
+            # optionally plot tracks
+            plotts=np.linspace(ts[0],ts[-1],1000)
+            cs=mpl.cm.twilight_shifted(np.interp(plotts,[plotts[0],plotts[-1]],[0,1]))
+            
+            plotRacs,plotDecs=astromet.track(plotts,params)
+            
+            ax=plt.gca()
+            fitparams=astromet.params()
+            for i in range(nTest):
+                fitparams.ra=fitresults['ra_ref']
+                fitparams.dec=fitresults['dec_ref']
+                fitparams.drac=fitresults['drac']+np.random.randn()*fitresults['drac_error']
+                fitparams.ddec=fitresults['ddec']+np.random.randn()*fitresults['ddec_error']
+                fitparams.pmrac=fitresults['pmrac']+np.random.randn()*fitresults['pmrac_error']
+                fitparams.pmdec=fitresults['pmdec']+np.random.randn()*fitresults['pmdec_error']
+                fitparams.parallax=fitresults['parallax']+np.random.randn()*fitresults['parallax_error']
+                
+                fitRacs,fitDecs=astromet.track(plotts,fitparams)
+                ax.plot(fitRacs,fitDecs,c='k',alpha=0.2,lw=0.5)
+            ax.scatter(plotRacs,plotDecs,c=cs,s=10,alpha=0.8)
+            ax.set_xlabel(r'$\delta \ RA \cos(Dec) \ \ [mas]$')
+            ax.set_ylabel(r'$\delta \ Dec \ \ [mas]$')
+
+            plt.show()
+
+    return allData
+
+def sample_with_binary_fraction(df, binary_fraction):
+    """
+    Sample rows with system_type 2.0 (binary) and system_type 1.0 (single) with a specific binary fraction.
+
+    Parameters:
+    - df: Original DataFrame containing both binary and single stars.
+    - binary_fraction: Desired binary fraction (ratio of binary stars to all stars).
+
+    Returns:
+    - A new DataFrame with the specified binary fraction.
+    """
+    # Sample rows with system_type 2.0 (binary) and system_type 1.0 (single)  
+    binary_rows = df[df['system_type'] == 2.0]
+    single_rows = df[df['system_type'] == 1.0]
+
+    # make single rows as long as binary rows
+    single_rows = single_rows.sample(n=int(len(binary_rows)), random_state=42)
+    
+    binary_rows = binary_rows.sample(n=int(len(binary_rows) * binary_fraction), random_state=42)
+    single_rows = single_rows.sample(n=int(len(single_rows) * (1-binary_fraction)), random_state=42)    
+    
+    # Combine the two samples
+    sampled_df = pd.concat([binary_rows, single_rows]).reset_index(drop=True)
+    
+    return sampled_df
+
+def plot_ruwe_distributions(df_list, titles, xlim=(0, 300)):
+    """
+    Plot KDEs of the RUWE distributions for multiple DataFrames and include the mean values in the legend.
+
+    Parameters:
+    - df_list: List of DataFrames containing the 'ruwe' column.
+    - titles: List of titles for each plot.
+    - xlim: Tuple specifying the x-axis limits (default: (0, 300)).
+    """
+    print("Setting the style and context for the plot")
+    sns.set(style="whitegrid", context="talk")
+
+    print("Creating the figure and axis objects")
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    print("Looping over the DataFrames and titles")
+    for df, title in tqdm(zip(df_list, titles), total=len(df_list), desc="Plotting distributions"):
+        print(f"Plotting KDE for {title}")
+        mean_ruwe = df['ruwe'].mean()
+        label = f'{title} (RUWE Mean: {mean_ruwe:.2f})'
+        sns.kdeplot(df['ruwe'], ax=ax, label=label)
+        print(f"KDE for {title} plotted with mean {mean_ruwe:.2f}")
+
+    print("Setting the x-axis limits")
+    ax.set_xlim(xlim)
+
+    print("Setting labels and title")
+    ax.set_xlabel('RUWE', fontsize=14)
+    ax.set_ylabel('Density', fontsize=14)
+    ax.set_title('RUWE Distributions for Different Binary Fractions', fontsize=16)
+
+    print("Adding a legend")
+    ax.legend()
+
+    print("Customizing the grid")
+    ax.grid(True, linestyle='--', alpha=0.7)
+
+    print("Customizing the ticks")
+    ax.tick_params(axis='both', which='major', labelsize=12)
+
+    print("Showing the plot")
+    plt.tight_layout()
+    plt.show()
+    print("Plot displayed")
+
+def plot_luminosity_vs_temperature(df):
+    """
+    Plot luminosity vs temperature color-coded by RemnantType_0.
+    
+    Parameters:
+    - df: DataFrame containing the 'Temperature', 'Luminosity', and 'RemnantType_0' columns.
+    """
+    remnant_type = {0: "NotARemnant - 0", 1: "HeWD - 1", 2: "COWD - 2", 3: "ONeWD - 3", 4: "NS_ECSN - 4",
+                    5: "NS_CCSN - 5", 6: "BH - 6", -1: "Empty - -1"}
+
+    # Map the numerical values in RemnantType_0 and RemnantType_1 to their corresponding string values
+    df['RemnantType_0_str'] = df['RemnantType_0'].map(remnant_type)
+    df['RemnantType_1_str'] = df['RemnantType_1'].map(remnant_type)
+
+    # Create a mapping from string labels to numerical values
+    remnant_type_num = {v: k for k, v in remnant_type.items()}
+    df['RemnantType_0_num'] = df['RemnantType_0_str'].map(remnant_type_num)
+    df['RemnantType_1_num'] = df['RemnantType_1_str'].map(remnant_type_num)
+
+    # Define a custom colormap from dark yellow to bright yellow to light grey to grey to dark grey to black
+    colors = ["#FFD700", "#FFFF00", "#D3D3D3", "#808080", "#505050", "#000000"]  # Dark yellow, bright yellow, light grey, grey, dark grey, black
+    cmap = mcolors.LinearSegmentedColormap.from_list("custom_cmap", colors)
+
+    # Plot luminosity vs temperature color-coded by RemnantType_0
+    plt.figure(figsize=(10, 6))
+    scatter = plt.scatter(np.log10(df['Temperature_0']), np.log10(df['Luminosity_0']), c=df['RemnantType_0_num'], cmap=cmap, s=20, alpha=0.7)
+    scatter = plt.scatter(np.log10(df['Temperature_1']), np.log10(df['Luminosity_1']), c=df['RemnantType_1_num'], cmap=cmap, s=20, alpha=0.7)
+    plt.gca().invert_xaxis()
+    plt.xlabel('log(Temperature)(K)')
+    plt.ylabel('log(Luminosity)(L_sun)')
+    plt.title('Luminosity vs Temperature')
+
+    # Create a colorbar with the string labels
+    cbar = plt.colorbar(scatter, ticks=list(remnant_type_num.values()))
+    cbar.ax.set_yticklabels([remnant_type[key] for key in remnant_type.keys()])
+    cbar.set_label('Remnant Type')
+
+    plt.grid(True)
+    plt.show()
+
+def final_time_step_table(popsynth_df):
+    """
+    Process the evolved_binaries dataframe to calculate mass ratio, luminosity ratio,
+    and other derived quantities, and keep the last row for each id.
+    
+    Parameters:
+    - popsynth_df: DataFrame containing the evolved binaries data.
+    
+    Returns:
+    - DataFrame with the final time step for each id.
+    """
+    # Calculate mass ratio q and luminosity ratio l
+    popsynth_df['q'] = popsynth_df['Mass_1'] / popsynth_df['Mass_0']
+    popsynth_df['l'] = popsynth_df['Luminosity_1'] / popsynth_df['Luminosity_0']
+    popsynth_df['log_sg_0'] = np.log10(G * popsynth_df['Mass_0']) / (popsynth_df['Radius_0'] ** 2)
+    popsynth_df['log_sg_1'] = np.log10(G * popsynth_df['Mass_1']) / (popsynth_df['Radius_1'] ** 2)
+
+    # Keep the last row for each id
+    popsynth_df = popsynth_df.groupby('id').tail(1)
+
+    # Make the id the index
+    popsynth_df = popsynth_df.set_index('id')
+
+    # Change the system_type to 1 for a binary evolved into a single
+    popsynth_df.loc[popsynth_df['q'].isna(), 'system_type'] = 1
+
+    return popsynth_df
