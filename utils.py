@@ -1234,7 +1234,7 @@ def gaia_observation(nTest, evolved_systems, astromet, Source, dr3_sl, alError=1
     dataNames = ('RA', 'Dec', 'pmRA', 'pmDec', 'pllx', 'M_1', 'M_2',
                  'M_tot', 'q', 'l', 'a', 'e', 'P', 'tPeri',
                  'Luminosity_0','Luminosity_1', 'Temperature_0', 'Temperature_1',
-                 'vTheta', 'vPhi', 'vOmega',
+                 'vTheta', 'vPhi', 'vOmega', 'Radius_0', 'Radius_1',
                  'predict_dTheta', 'simple_dTheta',
                  'N_obs', 'sigma_al', 'sigma_ac',
                  'fit_ra', 'fit_dec', 'fit_pmrac', 'fit_pmdec', 'fit_pllx',
@@ -1276,6 +1276,8 @@ def gaia_observation(nTest, evolved_systems, astromet, Source, dr3_sl, alError=1
         params.L_1 = evolved_systems['Luminosity_1'][i]  # secondary luminosity in Lsun
         params.T_0 = evolved_systems['Temperature_0'][i]  # primary temperature in K
         params.T_1 = evolved_systems['Temperature_1'][i]  # secondary temperature in K
+        params.R_0 = evolved_systems['Radius_0'][i]  # primary radius in Rsun
+        params.R_1 = evolved_systems['Radius_1'][i]  # secondary radius in Rsun
         params.vtheta = np.arccos(-1 + 2 * np.random.rand())
         params.vphi = 2 * np.pi * np.random.rand()
         params.vomega = 2 * np.pi * np.random.rand()
@@ -1302,6 +1304,8 @@ def gaia_observation(nTest, evolved_systems, astromet, Source, dr3_sl, alError=1
         thisRow['Luminosity_1'] = float(params.L_1)
         thisRow['Temperature_0'] = float(params.T_0)
         thisRow['Temperature_1'] = float(params.T_1)
+        thisRow['Radius_0'] = float(params.R_0)
+        thisRow['Radius_1'] = float(params.R_1)
         thisRow['tPeri'] = float(params.tperi)
         thisRow['vTheta'] = float(params.vtheta)
         thisRow['vPhi'] = float(params.vphi)
